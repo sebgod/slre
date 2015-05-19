@@ -23,8 +23,6 @@
 
 #include "slre.h"
 
-#define MAX_BRANCHES 100
-#define MAX_BRACKETS 100
 #define FAIL_IF(condition, error_code) if (condition) return (error_code)
 
 #ifndef ARRAY_SIZE
@@ -36,42 +34,6 @@
 #else
 #define DBG(x)
 #endif
-
-struct bracket_pair {
-  const char *ptr;  /* Points to the first char after '(' in regex  */
-  int len;          /* Length of the text between '(' and ')'       */
-  int branches;     /* Index in the branches array for this pair    */
-  int num_branches; /* Number of '|' in this bracket pair           */
-};
-
-struct branch {
-  int bracket_index;    /* index for 'struct bracket_pair brackets' */
-                        /* array defined below                      */
-  const char *schlong;  /* points to the '|' character in the regex */
-};
-
-struct regex_info {
-  /*
-   * Describes all bracket pairs in the regular expression.
-   * First entry is always present, and grabs the whole regex.
-   */
-  struct bracket_pair brackets[MAX_BRACKETS];
-  int num_brackets;
-
-  /*
-   * Describes alternations ('|' operators) in the regular expression.
-   * Each branch falls into a specific branch pair.
-   */
-  struct branch branches[MAX_BRANCHES];
-  int num_branches;
-
-  /* Array of captures provided by the user */
-  struct slre_cap *caps;
-  int num_caps;
-
-  /* E.g. SLRE_IGNORE_CASE. See enum below */
-  int flags;
-};
 
 static int is_metacharacter(const unsigned char *s) {
   static const char *metacharacters = "^$().[]*+?|\\Ssdbfnrtv";
@@ -109,7 +71,7 @@ static int hextoi(const unsigned char *s) {
 }
 
 static int match_op(const unsigned char *re, const unsigned char *s,
-                    struct regex_info *info) {
+                    struct slre_regex_info *info) {
   int result = 0;
   switch (*re) {
     case '\\':
@@ -157,7 +119,7 @@ static int match_op(const unsigned char *re, const unsigned char *s,
 }
 
 static int match_set(const char *re, int re_len, const char *s,
-                     struct regex_info *info) {
+                     struct slre_regex_info *info) {
   int len = 0, result = -1, invert = re[0] == '^';
 
   if (invert) re++, re_len--;
@@ -178,10 +140,10 @@ static int match_set(const char *re, int re_len, const char *s,
   return (!invert && result > 0) || (invert && result <= 0) ? 1 : -1;
 }
 
-static int doh(const char *s, int s_len, struct regex_info *info, int bi);
+static int doh(const char *s, int s_len, struct slre_regex_info *info, int bi);
 
 static int bar(const char *re, int re_len, const char *s, int s_len,
-               struct regex_info *info, int bi) {
+               struct slre_regex_info *info, int bi) {
   /* i is offset in re, j is offset in s, bi is brackets index */
   int i, j, n, step;
 
@@ -296,8 +258,8 @@ static int bar(const char *re, int re_len, const char *s, int s_len,
 }
 
 /* Process branch points */
-static int doh(const char *s, int s_len, struct regex_info *info, int bi) {
-  const struct bracket_pair *b = &info->brackets[bi];
+static int doh(const char *s, int s_len, struct slre_regex_info *info, int bi) {
+  const struct slre_bracket_pair *b = &info->brackets[bi];
   int i = 0, len, result;
   const char *p;
 
@@ -314,7 +276,7 @@ static int doh(const char *s, int s_len, struct regex_info *info, int bi) {
   return result;
 }
 
-static int baz(const char *s, int s_len, struct regex_info *info) {
+static int baz(const char *s, int s_len, struct slre_regex_info *info) {
   int i, result = -1, is_anchored = info->brackets[0].ptr[0] == '^';
 
   for (i = 0; i <= s_len; i++) {
@@ -329,9 +291,9 @@ static int baz(const char *s, int s_len, struct regex_info *info) {
   return result;
 }
 
-static void setup_branch_points(struct regex_info *info) {
+static void setup_branch_points(struct slre_regex_info *info) {
   int i, j;
-  struct branch tmp;
+  struct slre_branch tmp;
 
   /* First, sort branches. Must be stable, no qsort. Use bubble algo. */
   for (i = 0; i < info->num_branches; i++) {
@@ -358,10 +320,13 @@ static void setup_branch_points(struct regex_info *info) {
   }
 }
 
-static int foo(const char *re, int re_len, const char *s, int s_len,
-               struct regex_info *info) {
+int slre_compile(const char *re, size_t re_len, int flags,
+                 struct slre_regex_info *info) {
   int i, step, depth = 0;
 
+  info->flags = flags;
+  info->num_brackets = 0;
+  info->num_branches = 0;
   /* First bracket captures everything */
   info->brackets[0].ptr = re;
   info->brackets[0].len = re_len;
@@ -415,19 +380,33 @@ static int foo(const char *re, int re_len, const char *s, int s_len,
   FAIL_IF(depth != 0, SLRE_UNBALANCED_BRACKETS);
   setup_branch_points(info);
 
-  return baz(s, s_len, info);
+  return info->num_brackets;
+}
+
+int slre_match_reuse(struct slre_regex_info *info, const char *buf,
+                     int buf_len, struct slre_cap *caps, int num_caps)
+{
+  /* Initialize info structure with user-supplied capture array */
+  info->num_caps = num_caps;
+  info->caps = caps;
+
+  DBG(("========================> [compiled] [%.*s]\n", buf_len, buf));
+  return baz(buf, buf_len, info);
 }
 
 int slre_match(const char *regexp, const char *s, int s_len,
                struct slre_cap *caps, int num_caps, int flags) {
-  struct regex_info info;
+  struct slre_regex_info info;
 
-  /* Initialize info structure */
-  info.flags = flags;
-  info.num_brackets = info.num_branches = 0;
+  /* Initialize info structure with user-supplied capture array */
   info.num_caps = num_caps;
   info.caps = caps;
 
   DBG(("========================> [%s] [%.*s]\n", regexp, s_len, s));
-  return foo(regexp, (int) strlen(regexp), s, s_len, &info);
+  {
+    int maybe_error;
+
+    maybe_error = slre_compile(regexp, strlen(regexp), flags, &info);
+    return maybe_error < 0 ? maybe_error : baz(s, s_len, &info);
+  }
 }

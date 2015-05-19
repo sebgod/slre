@@ -34,9 +34,53 @@ struct slre_cap {
   int len;
 };
 
+#define MAX_BRANCHES 100
+#define MAX_BRACKETS 100
+
+struct slre_bracket_pair {
+  const char *ptr;  /* Points to the first char after '(' in regex  */
+  int len;          /* Length of the text between '(' and ')'       */
+  int branches;     /* Index in the branches array for this pair    */
+  int num_branches; /* Number of '|' in this bracket pair           */
+};
+
+struct slre_branch {
+  int bracket_index;    /* index for 'struct slre_bracket_pair brackets' */
+                        /* array defined below                      */
+  const char *schlong;  /* points to the '|' character in the regex */
+};
+
+struct slre_regex_info {
+  /*
+   * Describes all bracket pairs in the regular expression.
+   * First entry is always present, and grabs the whole regex.
+   */
+  struct slre_bracket_pair brackets[MAX_BRACKETS];
+  int num_brackets;
+
+  /*
+   * Describes alternations ('|' operators) in the regular expression.
+   * Each branch falls into a specific branch pair.
+   */
+  struct slre_branch branches[MAX_BRANCHES];
+  int num_branches;
+
+  /* Array of captures provided by the user */
+  struct slre_cap *caps;
+  int num_caps;
+
+  /* E.g. SLRE_IGNORE_CASE. See enum below */
+  int flags;
+};
+
+int slre_compile(const char *regexp, size_t re_len, int flags,
+                 struct slre_regex_info *info);
 
 int slre_match(const char *regexp, const char *buf, int buf_len,
                struct slre_cap *caps, int num_caps, int flags);
+
+int slre_match_reuse(struct slre_regex_info *info, const char *buf,
+                     int buf_len, struct slre_cap *caps, int num_caps);
 
 /* Possible flags for slre_match() */
 enum { SLRE_IGNORE_CASE = 1 };
