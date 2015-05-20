@@ -258,6 +258,18 @@ int main(void) {
     }
   }
 
+  {
+    /* Example more complex regular expression */
+    static const char * str = "aa 1234 xy\nxyz";
+    static const char * regex = "aa ([0-9]*) *([x-z]*)\\s+xy([yz])";
+    struct slre_cap caps[3];
+    ASSERT(slre_match(regex, str, strlen(str), caps, 3, 0) > 0);
+    ASSERT(caps[0].len == 4);
+    ASSERT(caps[1].len == 2);
+    ASSERT(caps[2].len == 1);
+    ASSERT(caps[2].ptr[0] == 'z');
+  }
+
   printf("Unit test %s (total test: %d, failed tests: %d)\n",
          static_failed_tests > 0 ? "FAILED" : "PASSED",
          static_total_tests, static_failed_tests);
